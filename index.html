@@ -163,6 +163,12 @@
 
     <!-- Modals -->
     <div id="modal-container" class="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
+        <!-- Queue Progress Toast -->
+        <div id="queue-progress" class="fixed top-24 left-1/2 -translate-x-1/2 z-[200] bg-accent text-bg px-6 py-3 rounded-full font-bold shadow-2xl flex items-center gap-3 transition-all duration-500 translate-y-[-100px] opacity-0 pointer-events-none">
+            <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
+            <span id="queue-status">Loading streams...</span>
+            <button onclick="PlayerManager.clearQueue()" class="ml-4 text-[10px] uppercase border border-bg/30 px-2 py-1 rounded hover:bg-bg/20 pointer-events-auto">Cancel Remaining</button>
+        </div>
         <!-- Shortcuts Modal -->
         <div id="shortcuts-modal" class="bg-surface border border-border w-full max-w-md rounded-2xl shadow-2xl overflow-hidden transform scale-95 transition-transform duration-300 hidden">
             <div class="p-6 border-b border-border flex items-center justify-between bg-card">
@@ -392,20 +398,23 @@
                     }
                     throw new Error("Duplicate stream.");
                 }
-                this.activeStreams.push({
-                    id: 's-' + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2, 11)),
-                    videoId: s.videoId,
-                    label: s.label || 'Untitled Stream',
-                    colorTag: s.colorTag || '#00e5a0'
-                });
+                const id = 's-' + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2, 11));
+                const newStream = { id, videoId: s.videoId, label: s.label || 'Untitled Stream', colorTag: s.colorTag || '#00e5a0' };
+                this.activeStreams.push(newStream);
                 if (!this.recentLinks.some(r => r.videoId === s.videoId)) {
-                    this.recentLinks.unshift({ ...this.activeStreams[this.activeStreams.length-1] });
+                    this.recentLinks.unshift({ ...newStream });
                     if (this.recentLinks.length > 8) this.recentLinks.pop();
                 }
                 this.notify();
+                PlayerManager.initPlayer(id, s.videoId, 800);
             }
             removeStream(id) { this.activeStreams = this.activeStreams.filter(s => s.id !== id); this.notify(); }
-            restoreSession() { this.activeStreams = [...this.savedSession]; this.savedSession = []; this.notify(); }
+            restoreSession() {
+                this.activeStreams = [...this.savedSession];
+                this.savedSession = [];
+                this.notify();
+                this.activeStreams.forEach(s => PlayerManager.initPlayer(s.id, s.videoId, 1000));
+            }
             clearSavedSession() { this.savedSession = []; localStorage.removeItem('activeStreams'); this.notify(); }
             clearRecent() { this.recentLinks = []; this.notify(); }
             setTheme(t) { this.theme = t; document.documentElement.className = t; this.notify(); }
@@ -432,29 +441,46 @@
 
         const state = new AppState();
 
+        function getQualityForStreamCount(count) {
+            if (count <= 2) return 'default';
+            if (count <= 4) return 'medium';
+            if (count <= 6) return 'small';
+            return 'tiny';
+        }
+
         const PlayerManager = {
             players: new Map(),
             observers: new Map(),
             intervals: new Map(),
             queue: [],
             isInit: false,
-            initPlayer(id, vId) {
+            batchDelay: 800,
+            initPlayer(id, vId, delay = 800) {
                 if (this.players.has(id) || this.queue.some(q => q.id === id)) return;
+                this.batchDelay = delay;
                 this.queue.push({ id, vId });
-                this.processQueue();
+                if (!this.isInit) this.processQueue();
             },
             async processQueue() {
                 if (this.isInit || this.queue.length === 0) return;
                 this.isInit = true;
                 const { id, vId } = this.queue.shift();
+                UI.updateQueueProgress();
 
                 try {
-                    const p = await new Promise((resolve, reject) => {
+                    await new Promise((resolve, reject) => {
                         const player = new YT.Player(`player-${id}`, {
                             videoId: vId,
-                            playerVars: { autoplay: 1, mute: 1, controls: 0, modestbranding: 1, rel: 0, showinfo: 0, iv_load_policy: 3, disablekb: 1, fs: 0, playsinline: 1, origin: window.location.origin, vq: state.perfMode ? 'small' : 'auto' },
+                            playerVars: {
+                                autoplay: 0, mute: 1, controls: 0, modestbranding: 1, rel: 0,
+                                showinfo: 0, iv_load_policy: 3, disablekb: 1, fs: 0, playsinline: 1,
+                                origin: window.location.origin, playbackQuality: 'small'
+                            },
                             events: {
-                                onReady: () => { this.onReady(id); resolve(player); },
+                                onReady: () => {
+                                    this.onReady(id);
+                                    setTimeout(resolve, this.batchDelay);
+                                },
                                 onStateChange: (e) => this.onStateChange(id, e),
                                 onError: (e) => { this.onError(id, e); reject(e); }
                             }
@@ -464,21 +490,41 @@
                     });
                 } catch(e) { console.error("Init failed", e); }
 
-                // Wait 1s between initializations to allow network to breathe
-                await new Promise(r => setTimeout(r, 1000));
                 this.isInit = false;
                 this.processQueue();
             },
+            updateAllQualities() {
+                const q = getQualityForStreamCount(state.activeStreams.length);
+                this.players.forEach((p, id) => {
+                    const btn = document.getElementById(id)?.querySelector('.btn-quality');
+                    if (btn && btn.dataset.manual === "true") return;
+                    if (p.setPlaybackQuality) p.setPlaybackQuality(state.perfMode ? 'small' : q);
+                });
+            },
             destroyPlayer(id) {
+                this.queue = this.queue.filter(q => q.id !== id);
                 const p = this.players.get(id); if (p) { p.destroy(); this.players.delete(id); }
                 const obs = this.observers.get(id); if (obs) { obs.disconnect(); this.observers.delete(id); }
                 const int = this.intervals.get(id); if (int) { clearInterval(int); this.intervals.delete(id); }
+                this.updateAllQualities();
+            },
+            clearQueue() {
+                this.queue = [];
+                UI.updateQueueProgress();
+                UI.showToast('info', 'Remaining queue cancelled');
             },
             setupIntersection(id) {
                 const obs = new IntersectionObserver((entries) => {
                     const p = this.players.get(id);
                     if (!p || !p.pauseVideo) return;
-                    if (!entries[0].isIntersecting) p.pauseVideo();
+                    const tile = document.getElementById(id);
+                    const keepAlive = tile.querySelector('.keep-alive-toggle')?.checked;
+                    const isOverlapped = state.sidebarOpen && window.innerWidth < 1024;
+                    if ((!entries[0].isIntersecting || isOverlapped) && !keepAlive) {
+                        p.pauseVideo();
+                    } else if (entries[0].isIntersecting) {
+                        setTimeout(() => p.playVideo(), 300);
+                    }
                 }, { threshold: 0.1 });
                 const el = document.getElementById(id);
                 if (el) { obs.observe(el); this.observers.set(id, obs); }
@@ -489,21 +535,40 @@
                 this.bindControls(id);
                 const int = setInterval(() => this.sync(id), 1000);
                 this.intervals.set(id, int);
+
+                setTimeout(() => {
+                    const q = getQualityForStreamCount(state.activeStreams.length);
+                    if (p.setPlaybackQuality) p.setPlaybackQuality(state.perfMode ? 'small' : q);
+                    if (p.playVideo) p.playVideo();
+                }, 500);
             },
             onStateChange(id, e) {
                 const tile = document.getElementById(id); if (!tile) return;
                 const badge = tile.querySelector('.stream-status');
                 const loading = tile.querySelector('.stream-loading');
                 const icon = tile.querySelector('.btn-play-pause i');
+                const p = this.players.get(id);
+
                 if (e.data === YT.PlayerState.PLAYING) {
                     badge.textContent = 'LIVE'; badge.parentElement.classList.replace('bg-black/40', 'bg-danger/80');
                     badge.parentElement.classList.replace('bg-warning/80', 'bg-danger/80');
                     loading.classList.add('hidden'); if (icon) icon.setAttribute('data-lucide', 'pause');
+                    if (this.intervals.has(`${id}-buf`)) {
+                        clearTimeout(this.intervals.get(`${id}-buf`));
+                        this.intervals.delete(`${id}-buf`);
+                    }
                 } else if (e.data === YT.PlayerState.BUFFERING) {
                     badge.textContent = 'BUFFERING';
                     badge.parentElement.classList.replace('bg-black/40', 'bg-warning/80');
                     badge.parentElement.classList.replace('bg-danger/80', 'bg-warning/80');
                     loading.classList.remove('hidden');
+
+                    if (!this.intervals.has(`${id}-buf`)) {
+                        const timer = setTimeout(() => {
+                            this.recoverPlayer(id);
+                        }, 10000);
+                        this.intervals.set(`${id}-buf`, timer);
+                    }
                 } else if (e.data === YT.PlayerState.ENDED) {
                     badge.textContent = 'ENDED';
                     badge.parentElement.classList.replace('bg-danger/80', 'bg-black/40');
@@ -551,6 +616,14 @@
                 };
                 tile.querySelector('.btn-pip').onclick = () => UI.togglePiP(id);
                 tile.querySelector('.btn-expand').onclick = () => UI.toggleExpand(id);
+                tile.querySelector('.btn-quality').onclick = (e) => {
+                    const qualities = ['default', 'hd720', 'medium', 'small'];
+                    const cur = p.getPlaybackQuality();
+                    let next = qualities[(qualities.indexOf(cur) + 1) % qualities.length];
+                    p.setPlaybackQuality(next);
+                    e.target.textContent = next.toUpperCase();
+                    e.target.dataset.manual = "true";
+                };
             },
             updateMuteIcon(id) {
                 const p = this.players.get(id), tile = document.getElementById(id);
@@ -560,6 +633,28 @@
                 tile.querySelector('.stream-volume').value = p.isMuted() ? 0 : vol;
                 lucide.createIcons();
             },
+            recoverPlayer(id) {
+                const p = this.players.get(id); if (!p) return;
+                const cur = p.getCurrentTime();
+                p.pauseVideo();
+                setTimeout(() => {
+                    p.seekTo(cur, true);
+                    p.playVideo();
+                    setTimeout(() => {
+                        if (p.getPlayerState() === YT.PlayerState.BUFFERING) {
+                            const tile = document.getElementById(id);
+                            const loading = tile.querySelector('.stream-loading');
+                            loading.classList.remove('hidden');
+                            loading.innerHTML = `<div class="text-center p-4 bg-warning/20 rounded-2xl border border-warning/50 shadow-2xl">
+                                <i data-lucide="zap-off" class="w-8 h-8 text-warning mx-auto mb-2"></i>
+                                <p class="text-white font-bold text-[10px] uppercase mb-1">Stream Unstable</p>
+                                <button onclick="PlayerManager.recoverPlayer('${id}')" class="bg-warning text-bg px-3 py-1 rounded text-[8px] font-bold uppercase hover:brightness-110">Retry</button>
+                            </div>`;
+                            lucide.createIcons();
+                        }
+                    }, 3000);
+                }, 2000);
+            },
             sync(id) {
                 const p = this.players.get(id), tile = document.getElementById(id);
                 if (!p || !p.getCurrentTime || !tile) return;
@@ -567,6 +662,10 @@
                 if (dur > 0) {
                     tile.querySelector('.stream-seekbar').value = (cur / dur) * 100;
                     tile.querySelector('.stream-time').textContent = `${this.fmt(cur)} / ${this.fmt(dur)}`;
+                }
+                if (p.getPlaybackQuality) {
+                    const q = p.getPlaybackQuality();
+                    tile.querySelector('.btn-quality').textContent = q === 'unknown' ? 'AUTO' : q.toUpperCase();
                 }
             },
             fmt(s) { const m = Math.floor(s/60), sec = Math.floor(s%60); return `${m.toString().padStart(2,'0')}:${sec.toString().padStart(2,'0')}`; }
@@ -578,7 +677,7 @@
                 document.documentElement.className = state.theme;
                 if (window.location.protocol === 'file:') document.getElementById('origin-warning').classList.remove('hidden');
                 this.render();
-                state.activeStreams.forEach(s => PlayerManager.initPlayer(s.id, s.videoId));
+                state.activeStreams.forEach(s => PlayerManager.initPlayer(s.id, s.videoId, 1000));
             },
             cache() {
                 this.sidebar = document.getElementById('sidebar');
@@ -611,6 +710,21 @@
                 document.getElementById('resume-all-btn').onclick = () => PlayerManager.players.forEach(p => p.playVideo());
                 window.onkeydown = (e) => this.handleShortcuts(e);
                 state.subscribe(() => this.render());
+                setInterval(() => this.updateBandwidth(), 2000);
+            },
+            updateBandwidth() {
+                const playingCount = Array.from(PlayerManager.players.values()).filter(p => p.getPlayerState && p.getPlayerState() === 1).length;
+                if (playingCount === 0) return;
+                const bw = 3.0 + ((playingCount - 1) * 0.8);
+                const el = document.getElementById('bw-stats');
+                const val = el.querySelector('.text-accent');
+                val.textContent = bw.toFixed(1) + ' Mbps';
+                el.classList.toggle('text-warning', bw > 10);
+                el.classList.toggle('text-danger', bw > 20);
+                if (bw > 20 && !this._lastBwWarn || Date.now() - this._lastBwWarn > 60000) {
+                    this.showToast('error', 'Warning: High bandwidth usage. Consider removing some streams.');
+                    this._lastBwWarn = Date.now();
+                }
             },
             handleShortcuts(e) {
                 const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
@@ -649,6 +763,7 @@
                 const count = state.activeStreams.length;
                 this.empty.classList.toggle('hidden', count > 0);
                 this.grid.classList.toggle('hidden', count === 0);
+                this.updateQueueProgress();
 
                 if (count === 0) {
                     const hasSaved = state.savedSession.length > 0;
@@ -658,10 +773,6 @@
                 } else this.renderGrid();
 
                 document.getElementById('stream-count').textContent = `${count} / 12`;
-                const activeCount = Array.from(PlayerManager.players.values()).filter(p => p.getPlayerState && p.getPlayerState() === 1).length;
-                const bw = activeCount * (state.perfMode ? 0.8 : 2.5);
-                document.getElementById('bw-stats').querySelector('.text-accent').textContent = bw.toFixed(1) + ' Mbps';
-                document.getElementById('bw-stats').classList.toggle('text-warning', bw > 15);
 
                 const pt = document.getElementById('perf-toggle');
                 pt.classList.toggle('bg-accent/20', state.perfMode);
@@ -689,6 +800,16 @@
                     </button>
                 `).join('');
                 lucide.createIcons();
+            },
+            updateQueueProgress() {
+                const el = document.getElementById('queue-progress');
+                const total = PlayerManager.queue.length;
+                if (total > 0) {
+                    el.classList.remove('translate-y-[-100px]', 'opacity-0');
+                    document.getElementById('queue-status').textContent = `Loading ${total} stream${total > 1 ? 's' : ''}...`;
+                } else {
+                    el.classList.add('translate-y-[-100px]', 'opacity-0');
+                }
             },
             renderGrid() {
                 const count = state.activeStreams.length;
@@ -738,6 +859,23 @@
                             }
                         };
                         t.ondblclick = () => this.toggleExpand(s.id);
+                        t.onmouseenter = () => {
+                            const p = PlayerManager.players.get(s.id);
+                            if (p && p.setPlaybackQuality) {
+                                p.setPlaybackQuality('default');
+                                p.unMute();
+                                p.setVolume(50);
+                                PlayerManager.updateMuteIcon(s.id);
+                            }
+                        };
+                        t.onmouseleave = () => {
+                            const p = PlayerManager.players.get(s.id);
+                            if (p && p.setPlaybackQuality && !t.classList.contains('fixed')) {
+                                p.setPlaybackQuality('small');
+                                p.mute();
+                                PlayerManager.updateMuteIcon(s.id);
+                            }
+                        };
                         t.innerHTML = `
                             <div id="player-${s.id}" class="w-full h-full pointer-events-none"></div>
                             <div class="absolute inset-0 transition-all group-hover:bg-black/40 pointer-events-none">
@@ -776,7 +914,12 @@
                                         </div>
                                         <span class="text-[10px] font-mono text-white/80 stream-time">00:00 / 00:00</span>
                                     </div>
-                                    <div class="flex gap-2">
+                                    <div class="flex gap-2 items-center">
+                                        <div class="flex items-center gap-1.5 px-2 py-1 bg-black/40 border border-white/10 rounded-lg">
+                                            <span class="text-[9px] text-white/60 font-bold uppercase tracking-tighter">HD</span>
+                                            <input type="checkbox" class="keep-alive-toggle w-3 h-3 accent-accent" title="Keep Alive">
+                                        </div>
+                                        <button class="px-2 py-1 bg-black/40 border border-white/10 text-[9px] font-bold text-white/80 rounded-lg hover:bg-accent hover:text-bg transition-all btn-quality" title="Toggle Quality">AUTO</button>
                                         <button class="text-white hover:text-accent transition-all btn-pip" title="PiP"><i data-lucide="external-link" class="w-4 h-4"></i></button>
                                         <button class="text-white hover:text-accent transition-all btn-expand" title="Expand"><i data-lucide="maximize" class="w-4 h-4"></i></button>
                                         <button onclick="state.removeStream('${s.id}')" class="text-danger/80 hover:text-danger"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
@@ -845,10 +988,17 @@
                 checks.forEach(c => {
                     const id = YouTubeParser.extractVideoId(c.dataset.url);
                     if (id) {
-                        try { state.addStream({ videoId: id, label: 'Batch Stream', colorTag: '#6366f1' }); a++; }
+                        try {
+                            const delay = state.activeStreams.length > 0 ? 2000 : 1500;
+                            const sId = 's-' + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2, 11));
+                            state.activeStreams.push({ id: sId, videoId: id, label: 'Batch Stream', colorTag: '#6366f1' });
+                            PlayerManager.initPlayer(sId, id, delay);
+                            a++;
+                        }
                         catch(e) { this.showToast('error', e.message); }
                     }
                 });
+                state.notify();
                 if (a > 0) this.showToast('success', `${a} streams added`);
                 this.closeModal();
             },
@@ -900,9 +1050,18 @@
             },
             toggleExpand(id) {
                 const t = document.getElementById(id); if (!t) return;
+                const p = PlayerManager.players.get(id);
                 const isExp = t.classList.contains('fixed');
-                if (isExp) { t.classList.remove('fixed', 'inset-0', 'z-[100]', 'p-8', 'bg-black/90'); t.classList.add('relative', 'aspect-video'); }
-                else { t.classList.add('fixed', 'inset-0', 'z-[100]', 'p-8', 'bg-black/90'); t.classList.remove('relative', 'aspect-video'); }
+                if (isExp) {
+                    t.classList.remove('fixed', 'inset-0', 'z-[100]', 'p-8', 'bg-black/90');
+                    t.classList.add('relative', 'aspect-video');
+                    if (p && p.setPlaybackQuality) p.setPlaybackQuality(getQualityForStreamCount(state.activeStreams.length));
+                }
+                else {
+                    t.classList.add('fixed', 'inset-0', 'z-[100]', 'p-8', 'bg-black/90');
+                    t.classList.remove('relative', 'aspect-video');
+                    if (p && p.setPlaybackQuality) p.setPlaybackQuality('hd1080');
+                }
                 lucide.createIcons();
             },
             copyLink(vId) {
