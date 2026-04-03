@@ -153,6 +153,9 @@
     </style>
 </head>
 <body class="font-sans">
+    <div id="origin-warning" class="hidden bg-danger text-white text-[10px] py-1 px-4 text-center font-bold uppercase tracking-widest z-[200]">
+        ⚠️ Running via FILE protocol. YouTube API may be unstable. Use localhost if possible.
+    </div>
     <div class="bg-grid"></div>
 
     <!-- Toast System -->
@@ -288,8 +291,20 @@
                         </div>
                         <div id="recent-links-list" class="grid grid-cols-2 gap-2"></div>
                     </div>
-                    <div id="bw-stats" class="pt-6 border-t border-border text-[10px] text-text-muted flex justify-between uppercase font-bold tracking-tighter">
-                        <span>Est. Bandwidth:</span><span class="text-accent">0.0 Mbps</span>
+                    <div class="pt-6 border-t border-border space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[10px] font-bold uppercase text-text-muted tracking-widest">Low Bandwidth Mode</span>
+                            <button id="perf-toggle" class="w-8 h-4 bg-bg border border-border rounded-full relative transition-all">
+                                <div class="absolute left-0.5 top-0.5 w-2.5 h-2.5 bg-text-muted rounded-full transition-all"></div>
+                            </button>
+                        </div>
+                        <div id="bw-stats" class="text-[10px] text-text-muted flex justify-between uppercase font-bold tracking-tighter">
+                            <span>Est. Bandwidth:</span><span class="text-accent">0.0 Mbps</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <button id="pause-all-btn" class="flex-1 py-1.5 bg-bg border border-border rounded text-[8px] font-bold uppercase hover:bg-border transition-all">Pause All</button>
+                            <button id="resume-all-btn" class="flex-1 py-1.5 bg-bg border border-border rounded text-[8px] font-bold uppercase hover:bg-border transition-all">Play All</button>
+                        </div>
                     </div>
                 </div>
             </aside>
@@ -351,6 +366,7 @@
                 this.theme = localStorage.getItem('theme') || 'dark';
                 this.layoutMode = localStorage.getItem('layoutMode') || 'grid';
                 this.sidebarOpen = localStorage.getItem('sidebarOpen') === 'true';
+                this.perfMode = localStorage.getItem('perfMode') === 'true';
                 this.listeners = [];
             }
             subscribe(cb) { this.listeners.push(cb); }
@@ -362,6 +378,7 @@
                 localStorage.setItem('theme', this.theme);
                 localStorage.setItem('layoutMode', this.layoutMode);
                 localStorage.setItem('sidebarOpen', this.sidebarOpen);
+                localStorage.setItem('perfMode', this.perfMode);
             }
             addStream(s) {
                 if (this.activeStreams.length >= 12) throw new Error("Maximum 12 streams.");
@@ -403,6 +420,13 @@
                 }
             }
             toggleSidebar() { this.sidebarOpen = !this.sidebarOpen; this.notify(); }
+            togglePerfMode() {
+                this.perfMode = !this.perfMode;
+                PlayerManager.players.forEach(p => {
+                    if (p.setPlaybackQuality) p.setPlaybackQuality(this.perfMode ? 'small' : 'auto');
+                });
+                this.notify();
+            }
             reorderStreams(o) { this.activeStreams = o; this.notify(); }
         }
 
@@ -412,19 +436,38 @@
             players: new Map(),
             observers: new Map(),
             intervals: new Map(),
+            queue: [],
+            isInit: false,
             initPlayer(id, vId) {
-                if (this.players.has(id)) return;
-                const p = new YT.Player(`player-${id}`, {
-                    videoId: vId,
-                    playerVars: { autoplay: 1, mute: 1, controls: 0, modestbranding: 1, rel: 0, showinfo: 0, iv_load_policy: 3, disablekb: 1, fs: 0, playsinline: 1 },
-                    events: {
-                        onReady: () => this.onReady(id),
-                        onStateChange: (e) => this.onStateChange(id, e),
-                        onError: (e) => this.onError(id, e)
-                    }
-                });
-                this.players.set(id, p);
-                this.setupIntersection(id);
+                if (this.players.has(id) || this.queue.some(q => q.id === id)) return;
+                this.queue.push({ id, vId });
+                this.processQueue();
+            },
+            async processQueue() {
+                if (this.isInit || this.queue.length === 0) return;
+                this.isInit = true;
+                const { id, vId } = this.queue.shift();
+
+                try {
+                    const p = await new Promise((resolve, reject) => {
+                        const player = new YT.Player(`player-${id}`, {
+                            videoId: vId,
+                            playerVars: { autoplay: 1, mute: 1, controls: 0, modestbranding: 1, rel: 0, showinfo: 0, iv_load_policy: 3, disablekb: 1, fs: 0, playsinline: 1, origin: window.location.origin, vq: state.perfMode ? 'small' : 'auto' },
+                            events: {
+                                onReady: () => { this.onReady(id); resolve(player); },
+                                onStateChange: (e) => this.onStateChange(id, e),
+                                onError: (e) => { this.onError(id, e); reject(e); }
+                            }
+                        });
+                        this.players.set(id, player);
+                        this.setupIntersection(id);
+                    });
+                } catch(e) { console.error("Init failed", e); }
+
+                // Wait 1s between initializations to allow network to breathe
+                await new Promise(r => setTimeout(r, 1000));
+                this.isInit = false;
+                this.processQueue();
             },
             destroyPlayer(id) {
                 const p = this.players.get(id); if (p) { p.destroy(); this.players.delete(id); }
@@ -533,6 +576,7 @@
             init() {
                 this.cache(); this.bind();
                 document.documentElement.className = state.theme;
+                if (window.location.protocol === 'file:') document.getElementById('origin-warning').classList.remove('hidden');
                 this.render();
                 state.activeStreams.forEach(s => PlayerManager.initPlayer(s.id, s.videoId));
             },
@@ -562,6 +606,9 @@
                 document.getElementById('batch-textarea').oninput = () => this.previewBatch();
                 document.getElementById('batch-confirm-btn').onclick = () => this.confirmBatch();
                 document.getElementById('clear-recent').onclick = () => state.clearRecent();
+                document.getElementById('perf-toggle').onclick = () => state.togglePerfMode();
+                document.getElementById('pause-all-btn').onclick = () => PlayerManager.players.forEach(p => p.pauseVideo());
+                document.getElementById('resume-all-btn').onclick = () => PlayerManager.players.forEach(p => p.playVideo());
                 window.onkeydown = (e) => this.handleShortcuts(e);
                 state.subscribe(() => this.render());
             },
@@ -611,7 +658,16 @@
                 } else this.renderGrid();
 
                 document.getElementById('stream-count').textContent = `${count} / 12`;
-                document.getElementById('bw-stats').querySelector('.text-accent').textContent = (count * 2.5).toFixed(1) + ' Mbps';
+                const activeCount = Array.from(PlayerManager.players.values()).filter(p => p.getPlayerState && p.getPlayerState() === 1).length;
+                const bw = activeCount * (state.perfMode ? 0.8 : 2.5);
+                document.getElementById('bw-stats').querySelector('.text-accent').textContent = bw.toFixed(1) + ' Mbps';
+                document.getElementById('bw-stats').classList.toggle('text-warning', bw > 15);
+
+                const pt = document.getElementById('perf-toggle');
+                pt.classList.toggle('bg-accent/20', state.perfMode);
+                pt.classList.toggle('border-accent/50', state.perfMode);
+                pt.querySelector('div').classList.toggle('translate-x-4', state.perfMode);
+                pt.querySelector('div').classList.toggle('bg-accent', state.perfMode);
 
                 let tip = this.sidebar.querySelector('.tip-box');
                 if (!tip) {
