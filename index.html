@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="ms" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamVault - Multi YouTube Live Streaming</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Space+Grotesk:wght@300..700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['DM Sans', 'sans-serif'],
+                        display: ['Space Grotesk', 'sans-serif'],
+                    },
+                    colors: {
+                        bg: 'var(--bg)',
+                        surface: 'var(--surface)',
+                        card: 'var(--card)',
+                        border: 'var(--border)',
+                        accent: 'var(--accent)',
+                        danger: 'var(--danger)',
+                        warning: 'var(--warning)',
+                        info: 'var(--info)',
+                        'text-main': 'var(--text)',
+                        'text-muted': 'var(--text-muted)',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        :root {
+            /* Dark Mode (Default) */
+            --bg: #08080f;
+            --surface: #10101a;
+            --card: #16162a;
+            --border: #252540;
+            --text: #e4e4f0;
+            --text-muted: #7878a0;
+            --accent: #00e5a0;
+            --accent-glow: rgba(0, 229, 160, 0.3);
+            --danger: #ff3366;
+            --danger-glow: rgba(255, 51, 102, 0.3);
+            --warning: #ffaa00;
+            --info: #6366f1;
+        }
+
+        .light {
+            --bg: #f0f0f8;
+            --surface: #ffffff;
+            --card: #ffffff;
+            --border: #d8d8ee;
+            --text: #16162a;
+            --text-muted: #666680;
+        }
+
+        .active-layout {
+            background-color: var(--accent) !important;
+            color: var(--bg) !important;
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'DM Sans', sans-serif;
+            transition: background-color 0.3s, color 0.3s;
+            overflow-x: hidden;
+        }
+
+        h1, h2, h3, h4, h5, h6, .font-display {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+
+        /* Animated Grid Lines */
+        .bg-grid {
+            background-image:
+                linear-gradient(to right, var(--border) 1px, transparent 1px),
+                linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+            background-size: 40px 40px;
+            mask-image: radial-gradient(circle at center, black, transparent 80%);
+            pointer-events: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            z-index: -1;
+            opacity: 0.2;
+            animation: grid-move 20s linear infinite;
+        }
+
+        @keyframes grid-move {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(40px); }
+        }
+
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.5); opacity: 0.5; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .live-dot {
+            animation: pulse 2s infinite;
+            box-shadow: 0 0 10px var(--danger);
+        }
+
+        .sidebar-glass {
+            background: rgba(16, 16, 26, 0.8);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-right: 1px solid var(--border);
+        }
+        .light .sidebar-glass {
+            background: rgba(255, 255, 255, 0.8);
+        }
+
+        .custom-range {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 4px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 2px;
+            outline: none;
+        }
+        .custom-range::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 12px; height: 12px;
+            background: var(--accent);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 5px var(--accent);
+        }
+
+        .stream-tile {
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .stream-tile.fixed {
+            z-index: 100;
+        }
+    </style>
+</head>
+<body class="font-sans">
+    <div class="bg-grid"></div>
+
+    <!-- Toast System -->
+    <div id="toast-container" class="fixed bottom-6 right-6 z-[200] flex flex-col gap-3 pointer-events-none"></div>
+
+    <!-- Modals -->
+    <div id="modal-container" class="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
+        <!-- Shortcuts Modal -->
+        <div id="shortcuts-modal" class="bg-surface border border-border w-full max-w-md rounded-2xl shadow-2xl overflow-hidden transform scale-95 transition-transform duration-300 hidden">
+            <div class="p-6 border-b border-border flex items-center justify-between bg-card">
+                <h3 class="text-xl font-display font-bold text-accent">Keyboard Shortcuts</h3>
+                <button class="modal-close p-2 hover:bg-border rounded-lg transition-colors"><i data-lucide="x" class="w-6 h-6"></i></button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div class="flex justify-between items-center"><span class="text-sm">Toggle Sidebar</span><kbd class="px-2 py-1 bg-bg border border-border rounded text-xs font-mono">S</kbd></div>
+                <div class="flex justify-between items-center"><span class="text-sm">Add Stream</span><kbd class="px-2 py-1 bg-bg border border-border rounded text-xs font-mono">A</kbd></div>
+                <div class="flex justify-between items-center"><span class="text-sm">Mute All</span><kbd class="px-2 py-1 bg-bg border border-border rounded text-xs font-mono">M</kbd></div>
+                <div class="flex justify-between items-center"><span class="text-sm">Cycle Layout</span><kbd class="px-2 py-1 bg-bg border border-border rounded text-xs font-mono">G</kbd></div>
+                <div class="flex justify-between items-center"><span class="text-sm">Focus Tile</span><kbd class="px-2 py-1 bg-bg border border-border rounded text-xs font-mono">1-9</kbd></div>
+                <div class="flex justify-between items-center"><span class="text-sm">Play/Pause Focus</span><kbd class="px-2 py-1 bg-bg border border-border rounded text-xs font-mono">Space</kbd></div>
+                <div class="flex justify-between items-center"><span class="text-sm">Add from Clipboard</span><kbd class="px-2 py-1 bg-bg border border-border rounded text-xs font-mono">Ctrl+V</kbd></div>
+            </div>
+        </div>
+
+        <!-- Add Stream Modal -->
+        <div id="add-stream-modal" class="bg-surface border border-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden transform scale-95 transition-transform duration-300 hidden">
+            <div class="p-6 border-b border-border flex items-center justify-between bg-card">
+                <h3 class="text-xl font-display font-bold">Add Live Stream</h3>
+                <button class="modal-close p-2 hover:bg-border rounded-lg transition-colors"><i data-lucide="x" class="w-6 h-6"></i></button>
+            </div>
+            <div class="p-6 space-y-6">
+                <div id="modal-step-1" class="space-y-4">
+                    <label class="text-sm font-bold text-text-muted uppercase tracking-wider text-[10px]">YouTube Link / ID</label>
+                    <div class="relative">
+                        <input type="text" id="modal-url-input" placeholder="Paste link here..." class="w-full bg-bg border-2 border-border px-4 py-4 rounded-xl focus:outline-none focus:border-accent transition-all text-lg font-medium pr-12">
+                        <div id="url-validation-icon" class="absolute right-4 top-1/2 -translate-y-1/2 hidden"><i data-lucide="check-circle-2" class="text-accent w-6 h-6"></i></div>
+                    </div>
+                </div>
+                <div id="modal-step-2" class="space-y-6 hidden">
+                    <div class="flex gap-4 p-4 bg-bg border border-border rounded-xl">
+                        <img id="modal-preview-thumb" src="" class="w-32 aspect-video object-cover rounded-lg bg-card">
+                        <div class="flex-1 min-w-0 flex flex-col justify-center">
+                            <p id="modal-preview-id" class="text-[10px] font-mono text-accent mb-1"></p>
+                            <p class="text-sm font-bold truncate">Stream Verified</p>
+                        </div>
+                    </div>
+                    <div class="space-y-4">
+                        <label class="text-sm font-bold text-text-muted uppercase tracking-wider text-[10px]">Stream Label</label>
+                        <input type="text" id="modal-label-input" placeholder="e.g. Lofi Girl, News..." class="w-full bg-bg border border-border px-4 py-3 rounded-xl focus:outline-none focus:border-accent transition-all">
+                    </div>
+                    <div class="space-y-4">
+                        <label class="text-sm font-bold text-text-muted uppercase tracking-wider text-[10px]">Color Tag</label>
+                        <div class="flex gap-3" id="color-picker"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="p-6 bg-card border-t border-border flex gap-3">
+                <button class="modal-close flex-1 px-6 py-3 rounded-xl border border-border font-bold hover:bg-border transition-all">Cancel</button>
+                <button id="modal-add-btn" class="flex-[2] bg-accent text-bg px-6 py-3 rounded-xl font-bold hover:brightness-110 transition-all opacity-50 cursor-not-allowed" disabled>Add to Grid</button>
+            </div>
+        </div>
+
+        <!-- Batch Add Modal -->
+        <div id="batch-add-modal" class="bg-surface border border-border w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden transform scale-95 transition-transform duration-300 hidden">
+            <div class="p-6 border-b border-border flex items-center justify-between bg-card">
+                <h3 class="text-xl font-display font-bold">Batch Add Streams</h3>
+                <button class="modal-close p-2 hover:bg-border rounded-lg transition-colors"><i data-lucide="x" class="w-6 h-6"></i></button>
+            </div>
+            <div class="p-6 space-y-6">
+                <textarea id="batch-textarea" rows="8" placeholder="Paste multiple YouTube links (one per line)..." class="w-full bg-bg border border-border p-4 rounded-xl focus:outline-none focus:border-accent transition-all font-mono text-sm resize-none"></textarea>
+                <div id="batch-preview" class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto hidden"></div>
+            </div>
+            <div class="p-6 bg-card border-t border-border flex gap-3">
+                <button class="modal-close flex-1 px-6 py-3 rounded-xl border border-border font-bold hover:bg-border transition-all">Cancel</button>
+                <button id="batch-confirm-btn" class="flex-[2] bg-accent text-bg px-6 py-3 rounded-xl font-bold hover:brightness-110 transition-all">Add All Valid</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="app" class="min-h-screen flex flex-col">
+        <header class="h-16 border-b border-border bg-surface/80 backdrop-blur-md sticky top-0 z-40 flex items-center justify-between px-4">
+            <div class="flex items-center gap-4">
+                <button id="sidebar-toggle" class="p-2 hover:bg-border rounded-lg transition-colors"><i data-lucide="menu" class="w-6 h-6"></i></button>
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 bg-accent rounded-lg flex items-center justify-center"><i data-lucide="globe" class="w-5 h-5 text-bg"></i></div>
+                    <span class="text-xl font-display font-bold tracking-tight">StreamVault</span>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 sm:gap-4">
+                <div id="layout-switcher" class="hidden sm:flex bg-bg p-1 rounded-lg border border-border">
+                    <button data-layout="grid" class="p-2 rounded-md transition-all active-layout"><i data-lucide="grid-3x3" class="w-4 h-4"></i></button>
+                    <button data-layout="horizontal" class="p-2 rounded-md transition-all"><i data-lucide="columns-3" class="w-4 h-4"></i></button>
+                    <button data-layout="focus" class="p-2 rounded-md transition-all"><i data-lucide="layout-template" class="w-4 h-4"></i></button>
+                </div>
+                <button id="theme-toggle" class="p-2 hover:bg-border rounded-lg transition-colors">
+                    <i data-lucide="sun" class="w-5 h-5 dark:block hidden"></i>
+                    <i data-lucide="moon" class="w-5 h-5 dark:hidden block"></i>
+                </button>
+                <button id="shortcuts-btn" class="p-2 hover:bg-border rounded-lg transition-colors hidden sm:block"><i data-lucide="help-circle" class="w-5 h-5"></i></button>
+                <button id="add-stream-btn" class="bg-accent text-bg px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:brightness-110 shadow-lg shadow-accent/20 transition-all">
+                    <i data-lucide="plus" class="w-5 h-5"></i>
+                    <span class="hidden sm:inline">Add Stream</span>
+                </button>
+            </div>
+        </header>
+
+        <div class="flex-1 flex overflow-hidden">
+            <aside id="sidebar" class="sidebar-glass w-72 h-[calc(100vh-64px)] flex-shrink-0 fixed lg:relative z-30 transition-transform duration-300 -translate-x-full lg:translate-x-0">
+                <div class="p-6 h-full flex flex-col gap-8 overflow-y-auto scrollbar-hide">
+                    <div class="space-y-4">
+                        <h3 class="text-[10px] font-bold uppercase text-text-muted tracking-widest">Quick Add</h3>
+                        <div class="relative group">
+                            <input type="text" id="sidebar-url-input" placeholder="Paste link..." class="w-full bg-bg border border-border px-4 py-3 rounded-xl focus:border-accent text-sm outline-none transition-all">
+                            <button id="sidebar-add-btn" class="absolute right-2 top-2 p-1.5 bg-accent/10 text-accent rounded-lg hover:bg-accent hover:text-bg transition-all"><i data-lucide="plus" class="w-4 h-4"></i></button>
+                        </div>
+                    </div>
+                    <div class="space-y-4 flex-1">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-[10px] font-bold uppercase text-text-muted tracking-widest">Active Streams</h3>
+                            <span id="stream-count" class="text-[10px] font-mono px-2 py-0.5 bg-border rounded-full">0 / 12</span>
+                        </div>
+                        <div id="active-streams-list" class="space-y-2"></div>
+                    </div>
+                    <div class="space-y-4">
+                        <button id="batch-add-btn-sidebar" class="w-full py-3 px-4 border border-border hover:border-accent rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-2 uppercase tracking-wider">
+                            <i data-lucide="layers" class="w-4 h-4 text-accent"></i> Batch Add Links
+                        </button>
+                    </div>
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-[10px] font-bold uppercase text-text-muted tracking-widest">Recent Sessions</h3>
+                            <button id="clear-recent" class="text-[8px] text-danger hover:underline">CLEAR ALL</button>
+                        </div>
+                        <div id="recent-links-list" class="grid grid-cols-2 gap-2"></div>
+                    </div>
+                    <div id="bw-stats" class="pt-6 border-t border-border text-[10px] text-text-muted flex justify-between uppercase font-bold tracking-tighter">
+                        <span>Est. Bandwidth:</span><span class="text-accent">0.0 Mbps</span>
+                    </div>
+                </div>
+            </aside>
+
+            <main class="flex-1 relative overflow-auto bg-black/20">
+                <div id="empty-state" class="absolute inset-0 flex flex-col items-center justify-center p-8 text-center overflow-auto">
+                    <div id="empty-normal" class="flex flex-col items-center">
+                        <div class="w-24 h-24 mb-8 relative">
+                            <div class="absolute inset-0 bg-accent/20 rounded-full blur-3xl animate-pulse"></div>
+                            <div class="relative bg-card border border-border rounded-2xl w-full h-full flex items-center justify-center animate-bounce shadow-2xl" style="animation-duration: 4s">
+                                <i data-lucide="tv-2" class="w-12 h-12 text-accent"></i>
+                            </div>
+                        </div>
+                        <h2 class="text-3xl font-display font-bold mb-2">Ready to watch?</h2>
+                        <p class="text-text-muted text-sm mb-8 max-w-xs">Paste a YouTube Live link to start watching multiple streams simultaneously.</p>
+                        <button id="empty-add-btn" class="bg-accent text-bg px-8 py-4 rounded-2xl font-bold text-lg hover:brightness-110 shadow-xl shadow-accent/20 flex items-center gap-3 transition-all hover:scale-105 active:scale-95">
+                            <i data-lucide="plus-circle" class="w-6 h-6"></i> Add Your First Stream
+                        </button>
+                    </div>
+                    <div id="empty-restore" class="hidden flex flex-col items-center p-8 bg-card border border-accent/20 rounded-3xl shadow-2xl max-w-sm">
+                        <div class="w-16 h-16 bg-accent/10 rounded-full flex items-center justify-center mb-6 text-accent"><i data-lucide="history" class="w-8 h-8"></i></div>
+                        <h3 class="text-xl font-display font-bold mb-2">Restore Session?</h3>
+                        <p class="text-text-muted text-xs mb-8">We found <span id="saved-count" class="text-accent font-bold">0</span> streams from your previous session.</p>
+                        <div class="flex flex-col w-full gap-2">
+                            <button onclick="state.restoreSession()" class="w-full bg-accent text-bg py-3 rounded-xl font-bold hover:brightness-110">Restore All</button>
+                            <button onclick="state.clearSavedSession()" class="w-full bg-white/5 text-text-muted py-3 rounded-xl font-bold hover:bg-white/10">Start Fresh</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="streams-grid" class="p-4 grid gap-4 h-full hidden content-start transition-all duration-500"></div>
+            </main>
+        </div>
+    </div>
+
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script>
+        const YouTubeParser = {
+            extractVideoId(url) {
+                if (!url) return null;
+                url = url.trim();
+                if (/^[a-zA-Z0-9_-]{11}$/.test(url)) return url;
+                const patterns = [
+                    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/live\/|m\.youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})/,
+                    /youtube\.com\/watch\?.*v=([a-zA-Z0-9_-]{11})/
+                ];
+                for (const p of patterns) {
+                    const match = url.match(p);
+                    if (match) return match[1];
+                }
+                return null;
+            }
+        };
+
+        class AppState {
+            constructor() {
+                this.activeStreams = [];
+                this.savedSession = JSON.parse(localStorage.getItem('activeStreams')) || [];
+                this.recentLinks = JSON.parse(localStorage.getItem('recentLinks')) || [];
+                this.theme = localStorage.getItem('theme') || 'dark';
+                this.layoutMode = localStorage.getItem('layoutMode') || 'grid';
+                this.sidebarOpen = localStorage.getItem('sidebarOpen') === 'true';
+                this.listeners = [];
+            }
+            subscribe(cb) { this.listeners.push(cb); }
+            notify() { this.listeners.forEach(cb => cb(this)); this.save(); }
+            save() {
+                const toSave = this.activeStreams.length > 0 ? this.activeStreams : this.savedSession;
+                localStorage.setItem('activeStreams', JSON.stringify(toSave));
+                localStorage.setItem('recentLinks', JSON.stringify(this.recentLinks));
+                localStorage.setItem('theme', this.theme);
+                localStorage.setItem('layoutMode', this.layoutMode);
+                localStorage.setItem('sidebarOpen', this.sidebarOpen);
+            }
+            addStream(s) {
+                if (this.activeStreams.length >= 12) throw new Error("Maximum 12 streams.");
+                const existing = this.activeStreams.find(st => st.videoId === s.videoId);
+                if (existing) {
+                    const el = document.getElementById(existing.id);
+                    if (el) {
+                        el.classList.add('ring-4', 'ring-accent', 'scale-105', 'z-10');
+                        setTimeout(() => el.classList.remove('ring-4', 'ring-accent', 'scale-105', 'z-10'), 2000);
+                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                    throw new Error("Duplicate stream.");
+                }
+                this.activeStreams.push({
+                    id: 's-' + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2, 11)),
+                    videoId: s.videoId,
+                    label: s.label || 'Untitled Stream',
+                    colorTag: s.colorTag || '#00e5a0'
+                });
+                if (!this.recentLinks.some(r => r.videoId === s.videoId)) {
+                    this.recentLinks.unshift({ ...this.activeStreams[this.activeStreams.length-1] });
+                    if (this.recentLinks.length > 8) this.recentLinks.pop();
+                }
+                this.notify();
+            }
+            removeStream(id) { this.activeStreams = this.activeStreams.filter(s => s.id !== id); this.notify(); }
+            restoreSession() { this.activeStreams = [...this.savedSession]; this.savedSession = []; this.notify(); }
+            clearSavedSession() { this.savedSession = []; localStorage.removeItem('activeStreams'); this.notify(); }
+            clearRecent() { this.recentLinks = []; this.notify(); }
+            setTheme(t) { this.theme = t; document.documentElement.className = t; this.notify(); }
+            setLayoutMode(m) { this.layoutMode = m; this.notify(); }
+            swapFocus(id) {
+                const idx = this.activeStreams.findIndex(s => s.id === id);
+                if (idx > 0) {
+                    const temp = this.activeStreams[0];
+                    this.activeStreams[0] = this.activeStreams[idx];
+                    this.activeStreams[idx] = temp;
+                    this.notify();
+                }
+            }
+            toggleSidebar() { this.sidebarOpen = !this.sidebarOpen; this.notify(); }
+            reorderStreams(o) { this.activeStreams = o; this.notify(); }
+        }
+
+        const state = new AppState();
+
+        const PlayerManager = {
+            players: new Map(),
+            observers: new Map(),
+            intervals: new Map(),
+            initPlayer(id, vId) {
+                if (this.players.has(id)) return;
+                const p = new YT.Player(`player-${id}`, {
+                    videoId: vId,
+                    playerVars: { autoplay: 1, mute: 1, controls: 0, modestbranding: 1, rel: 0, showinfo: 0, iv_load_policy: 3, disablekb: 1, fs: 0, playsinline: 1 },
+                    events: {
+                        onReady: () => this.onReady(id),
+                        onStateChange: (e) => this.onStateChange(id, e),
+                        onError: (e) => this.onError(id, e)
+                    }
+                });
+                this.players.set(id, p);
+                this.setupIntersection(id);
+            },
+            destroyPlayer(id) {
+                const p = this.players.get(id); if (p) { p.destroy(); this.players.delete(id); }
+                const obs = this.observers.get(id); if (obs) { obs.disconnect(); this.observers.delete(id); }
+                const int = this.intervals.get(id); if (int) { clearInterval(int); this.intervals.delete(id); }
+            },
+            setupIntersection(id) {
+                const obs = new IntersectionObserver((entries) => {
+                    const p = this.players.get(id);
+                    if (!p || !p.pauseVideo) return;
+                    if (!entries[0].isIntersecting) p.pauseVideo();
+                }, { threshold: 0.1 });
+                const el = document.getElementById(id);
+                if (el) { obs.observe(el); this.observers.set(id, obs); }
+            },
+            onReady(id) {
+                const p = this.players.get(id);
+                p.mute();
+                this.bindControls(id);
+                const int = setInterval(() => this.sync(id), 1000);
+                this.intervals.set(id, int);
+            },
+            onStateChange(id, e) {
+                const tile = document.getElementById(id); if (!tile) return;
+                const badge = tile.querySelector('.stream-status');
+                const loading = tile.querySelector('.stream-loading');
+                const icon = tile.querySelector('.btn-play-pause i');
+                if (e.data === YT.PlayerState.PLAYING) {
+                    badge.textContent = 'LIVE'; badge.parentElement.classList.replace('bg-black/40', 'bg-danger/80');
+                    badge.parentElement.classList.replace('bg-warning/80', 'bg-danger/80');
+                    loading.classList.add('hidden'); if (icon) icon.setAttribute('data-lucide', 'pause');
+                } else if (e.data === YT.PlayerState.BUFFERING) {
+                    badge.textContent = 'BUFFERING';
+                    badge.parentElement.classList.replace('bg-black/40', 'bg-warning/80');
+                    badge.parentElement.classList.replace('bg-danger/80', 'bg-warning/80');
+                    loading.classList.remove('hidden');
+                } else if (e.data === YT.PlayerState.ENDED) {
+                    badge.textContent = 'ENDED';
+                    badge.parentElement.classList.replace('bg-danger/80', 'bg-black/40');
+                    badge.parentElement.classList.replace('bg-warning/80', 'bg-black/40');
+                    UI.showEnded(id);
+                } else if (e.data === YT.PlayerState.PAUSED) {
+                    if (icon) icon.setAttribute('data-lucide', 'play');
+                }
+                lucide.createIcons();
+            },
+            onError(id, e) {
+                const msgs = { 2: "ID Video tidak sah", 5: "Masalah HTML5 player", 100: "Video tidak dijumpai/private", 101: "Embed tidak dibenarkan", 150: "Embed tidak dibenarkan" };
+                const msg = msgs[e.data] || "Ralat pemainan";
+                const tile = document.getElementById(id);
+                if (tile) {
+                    const loading = tile.querySelector('.stream-loading');
+                    loading.classList.remove('hidden');
+                    loading.innerHTML = `<div class="text-center p-4 bg-danger/20 rounded-2xl border border-danger/50 shadow-2xl">
+                        <i data-lucide="alert-circle" class="w-8 h-8 text-danger mx-auto mb-2"></i>
+                        <p class="text-white font-bold text-[10px] uppercase mb-1">${msg}</p>
+                        <button onclick="state.removeStream('${id}')" class="text-[8px] text-white/70 hover:underline uppercase font-bold">Remove</button>
+                    </div>`;
+                    lucide.createIcons();
+                }
+                UI.showToast('error', `Error ${e.data}: ${msg}`);
+            },
+            bindControls(id) {
+                const tile = document.getElementById(id), p = this.players.get(id);
+                if (!tile || !p) return;
+                tile.querySelector('.btn-play-pause').onclick = () => {
+                    if (p.getPlayerState() === YT.PlayerState.PLAYING) p.pauseVideo(); else p.playVideo();
+                };
+                tile.querySelector('.btn-mute').onclick = () => {
+                    if (p.isMuted()) { p.unMute(); p.setVolume(50); } else p.mute();
+                    this.updateMuteIcon(id);
+                };
+                tile.querySelector('.stream-volume').oninput = (ev) => {
+                    const v = parseInt(ev.target.value); p.setVolume(v);
+                    if (v === 0) p.mute(); else p.unMute();
+                    this.updateMuteIcon(id);
+                };
+                tile.querySelector('.stream-seekbar').oninput = (ev) => {
+                    const time = (ev.target.value / 100) * p.getDuration();
+                    p.seekTo(time, true);
+                };
+                tile.querySelector('.btn-pip').onclick = () => UI.togglePiP(id);
+                tile.querySelector('.btn-expand').onclick = () => UI.toggleExpand(id);
+            },
+            updateMuteIcon(id) {
+                const p = this.players.get(id), tile = document.getElementById(id);
+                const icon = tile.querySelector('.btn-mute i');
+                const vol = p.getVolume();
+                icon.setAttribute('data-lucide', p.isMuted() || vol === 0 ? 'volume-x' : (vol < 50 ? 'volume-1' : 'volume-2'));
+                tile.querySelector('.stream-volume').value = p.isMuted() ? 0 : vol;
+                lucide.createIcons();
+            },
+            sync(id) {
+                const p = this.players.get(id), tile = document.getElementById(id);
+                if (!p || !p.getCurrentTime || !tile) return;
+                const cur = p.getCurrentTime(), dur = p.getDuration();
+                if (dur > 0) {
+                    tile.querySelector('.stream-seekbar').value = (cur / dur) * 100;
+                    tile.querySelector('.stream-time').textContent = `${this.fmt(cur)} / ${this.fmt(dur)}`;
+                }
+            },
+            fmt(s) { const m = Math.floor(s/60), sec = Math.floor(s%60); return `${m.toString().padStart(2,'0')}:${sec.toString().padStart(2,'0')}`; }
+        };
+
+        const UI = {
+            init() {
+                this.cache(); this.bind();
+                document.documentElement.className = state.theme;
+                this.render();
+                state.activeStreams.forEach(s => PlayerManager.initPlayer(s.id, s.videoId));
+            },
+            cache() {
+                this.sidebar = document.getElementById('sidebar');
+                this.grid = document.getElementById('streams-grid');
+                this.empty = document.getElementById('empty-state');
+                this.modalContainer = document.getElementById('modal-container');
+                this.modalContainer.onclick = (e) => { if (e.target === this.modalContainer) this.closeModal(); };
+                this.toastContainer = document.getElementById('toast-container');
+            },
+            bind() {
+                document.getElementById('sidebar-toggle').onclick = () => state.toggleSidebar();
+                document.getElementById('theme-toggle').onclick = () => state.setTheme(state.theme === 'dark' ? 'light' : 'dark');
+                document.getElementById('shortcuts-btn').onclick = () => this.openModal('shortcuts');
+                document.getElementById('add-stream-btn').onclick = () => this.openModal('add');
+                document.getElementById('empty-add-btn').onclick = () => this.openModal('add');
+                document.getElementById('batch-add-btn-sidebar').onclick = () => this.openModal('batch');
+                document.querySelectorAll('.modal-close').forEach(b => b.onclick = () => this.closeModal());
+                document.querySelectorAll('#layout-switcher button').forEach(btn => btn.onclick = () => state.setLayoutMode(btn.dataset.layout));
+                document.getElementById('modal-url-input').oninput = (e) => this.validateUrl(e.target.value);
+                document.getElementById('modal-add-btn').onclick = () => this.confirmAdd();
+                document.getElementById('sidebar-add-btn').onclick = () => {
+                    const id = YouTubeParser.extractVideoId(document.getElementById('sidebar-url-input').value);
+                    if (id) { state.addStream({ videoId: id, label: 'Untitled', colorTag: '#00e5a0' }); document.getElementById('sidebar-url-input').value = ''; }
+                };
+                document.getElementById('batch-textarea').oninput = () => this.previewBatch();
+                document.getElementById('batch-confirm-btn').onclick = () => this.confirmBatch();
+                document.getElementById('clear-recent').onclick = () => state.clearRecent();
+                window.onkeydown = (e) => this.handleShortcuts(e);
+                state.subscribe(() => this.render());
+            },
+            handleShortcuts(e) {
+                const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && !isInput) {
+                    this.openModal('add'); setTimeout(() => document.getElementById('modal-url-input').focus(), 50);
+                }
+                if (isInput) { if (e.key === 'Escape') e.target.blur(); return; }
+                if (e.key >= '1' && e.key <= '9') { const s = state.activeStreams[parseInt(e.key)-1]; if (s) this.toggleExpand(s.id); }
+                switch(e.key.toLowerCase()) {
+                    case 's': state.toggleSidebar(); break;
+                    case 'a': this.openModal('add'); break;
+                    case 'm': this.toggleMuteAll(); break;
+                    case 'g': this.cycleLayout(); break;
+                    case 'backspace':
+                    case 'delete':
+                        const ex = state.activeStreams.find(s => document.getElementById(s.id).classList.contains('fixed'));
+                        if (ex) { this.toggleExpand(ex.id); state.removeStream(ex.id); }
+                        break;
+                    case ' ': e.preventDefault(); const f = state.activeStreams.find(s => document.getElementById(s.id).classList.contains('fixed')); if (f) { const p = PlayerManager.players.get(f.id); if (p.getPlayerState() === YT.PlayerState.PLAYING) p.pauseVideo(); else p.playVideo(); } break;
+                    case '?': this.openModal('shortcuts'); break;
+                    case 'escape': this.closeModal(); state.activeStreams.forEach(s => { if (document.getElementById(s.id).classList.contains('fixed')) this.toggleExpand(s.id); }); break;
+                }
+            },
+            toggleMuteAll() {
+                const isMuted = Array.from(PlayerManager.players.values()).every(p => p.isMuted());
+                PlayerManager.players.forEach((p, id) => { if (isMuted) { p.unMute(); p.setVolume(50); } else p.mute(); PlayerManager.updateMuteIcon(id); });
+                this.showToast('info', isMuted ? 'Unmuted all' : 'Muted all');
+            },
+            cycleLayout() {
+                const modes = ['grid', 'horizontal', 'focus'];
+                state.setLayoutMode(modes[(modes.indexOf(state.layoutMode)+1)%modes.length]);
+            },
+            render() {
+                this.sidebar.classList.toggle('-translate-x-full', !state.sidebarOpen);
+                document.querySelectorAll('#layout-switcher button').forEach(btn => btn.classList.toggle('active-layout', btn.dataset.layout === state.layoutMode));
+                const count = state.activeStreams.length;
+                this.empty.classList.toggle('hidden', count > 0);
+                this.grid.classList.toggle('hidden', count === 0);
+
+                if (count === 0) {
+                    const hasSaved = state.savedSession.length > 0;
+                    document.getElementById('empty-normal').classList.toggle('hidden', hasSaved);
+                    document.getElementById('empty-restore').classList.toggle('hidden', !hasSaved);
+                    document.getElementById('saved-count').textContent = state.savedSession.length;
+                } else this.renderGrid();
+
+                document.getElementById('stream-count').textContent = `${count} / 12`;
+                document.getElementById('bw-stats').querySelector('.text-accent').textContent = (count * 2.5).toFixed(1) + ' Mbps';
+
+                let tip = this.sidebar.querySelector('.tip-box');
+                if (!tip) {
+                    tip = document.createElement('div'); tip.className = 'tip-box p-3 bg-accent/5 border border-accent/20 rounded-xl mt-4';
+                    tip.innerHTML = `<p class="text-[9px] text-accent leading-relaxed font-medium"><i data-lucide="info" class="w-3 h-3 inline-block mr-1 mb-0.5"></i><strong>TIP:</strong> Mute streams yang tidak didengar untuk menjimatkan penggunaan bandwidth.</p>`;
+                    this.sidebar.querySelector('.p-6').appendChild(tip);
+                }
+
+                document.getElementById('active-streams-list').innerHTML = state.activeStreams.map(s => `
+                    <div onclick="state.swapFocus('${s.id}')" class="active-stream-item flex items-center gap-3 p-2 bg-white/5 rounded-lg group border border-transparent hover:border-accent/30 transition-all cursor-pointer">
+                        <div class="w-2 h-2 rounded-full" style="background-color: ${s.colorTag}"></div>
+                        <span class="text-xs truncate flex-1 font-medium">${s.label}</span>
+                        <button onclick="event.stopPropagation(); state.removeStream('${s.id}')" class="opacity-0 group-hover:opacity-100 p-1 hover:text-danger"><i data-lucide="x" class="w-4 h-4"></i></button>
+                    </div>
+                `).join('');
+                document.getElementById('recent-links-list').innerHTML = state.recentLinks.map(l => `
+                    <button onclick="state.addStream({ videoId: '${l.videoId}', label: '${l.label}', colorTag: '${l.colorTag}' })" class="relative aspect-video rounded-lg overflow-hidden border border-border group hover:border-accent transition-all">
+                        <img src="https://img.youtube.com/vi/${l.videoId}/hqdefault.jpg" class="w-full h-full object-cover opacity-60 group-hover:opacity-100">
+                    </button>
+                `).join('');
+                lucide.createIcons();
+            },
+            renderGrid() {
+                const count = state.activeStreams.length;
+                this.grid.style.gridTemplateColumns = ''; this.grid.style.gridTemplateRows = '';
+                if (state.layoutMode === 'horizontal') {
+                    this.grid.className = 'p-4 grid gap-4 h-full content-start transition-all grid-flow-col overflow-x-auto scrollbar-hide';
+                    this.grid.style.gridAutoColumns = 'min(640px, 85vw)';
+                } else if (state.layoutMode === 'focus' && count > 1) {
+                    this.grid.className = 'p-4 grid gap-4 h-full content-start transition-all';
+                    this.grid.style.gridTemplateColumns = '3fr 1fr';
+                    this.grid.style.gridTemplateRows = `repeat(${count-1}, 1fr)`;
+                } else {
+                    this.grid.className = 'p-4 grid gap-4 h-full content-start transition-all';
+                    const cols = count >= 10 ? 4 : (count >= 5 ? 3 : (count >= 2 ? 2 : 1));
+                    if (count === 3) this.grid.style.gridTemplateColumns = '1fr 1fr';
+                    else this.grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+                }
+                const ids = state.activeStreams.map(s => s.id);
+                Array.from(this.grid.children).forEach(t => { if (!ids.includes(t.id)) { t.remove(); PlayerManager.destroyPlayer(t.id); } });
+                state.activeStreams.forEach((s, idx) => {
+                    let t = document.getElementById(s.id);
+                    if (!t) {
+                        t = document.createElement('div'); t.id = s.id;
+                        t.className = 'stream-tile relative aspect-video bg-black border border-border rounded-xl overflow-hidden shadow-2xl group transition-all duration-500';
+                        t.draggable = true;
+                        t.ondragstart = (e) => { e.dataTransfer.setData('text/plain', s.id); t.style.opacity = '0.5'; };
+                        t.ondragend = () => t.style.opacity = '1';
+                        t.ondragover = (e) => { e.preventDefault(); t.classList.add('border-accent', 'border-dashed'); };
+                        t.ondragleave = () => t.classList.remove('border-accent', 'border-dashed');
+                        t.ondrop = (e) => {
+                            e.preventDefault(); t.classList.remove('border-accent', 'border-dashed');
+                            const draggedId = e.dataTransfer.getData('text/plain');
+                            if (draggedId !== s.id) {
+                                const list = [...state.activeStreams];
+                                const fromIdx = list.findIndex(x => x.id === draggedId);
+                                const toIdx = list.findIndex(x => x.id === s.id);
+                                const [item] = list.splice(fromIdx, 1); list.splice(toIdx, 0, item);
+                                state.reorderStreams(list);
+                            }
+                        };
+                        t.onclick = () => {
+                            if (state.layoutMode === 'focus' && idx !== 0) {
+                                const list = [...state.activeStreams];
+                                const [item] = list.splice(idx, 1);
+                                list.unshift(item);
+                                state.reorderStreams(list);
+                            }
+                        };
+                        t.ondblclick = () => this.toggleExpand(s.id);
+                        t.innerHTML = `
+                            <div id="player-${s.id}" class="w-full h-full pointer-events-none"></div>
+                            <div class="absolute inset-0 transition-all group-hover:bg-black/40 pointer-events-none">
+                                <div class="absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-black/80 to-transparent"></div>
+                                <div class="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/90 to-transparent"></div>
+                            </div>
+                            <!-- Hover Overlay Buttons -->
+                            <div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                <button onclick="UI.toggleExpand('${s.id}')" class="w-16 h-16 bg-accent text-bg rounded-full flex items-center justify-center shadow-2xl transform scale-50 group-hover:scale-100 transition-all pointer-events-auto hover:brightness-110">
+                                    <i data-lucide="maximize" class="w-8 h-8"></i>
+                                </button>
+                                <div class="absolute top-4 right-4 flex gap-2 pointer-events-auto">
+                                    <button onclick="UI.togglePin('${s.id}')" class="p-2 bg-black/60 text-white rounded-lg hover:bg-accent hover:text-bg transition-all" title="Pin"><i data-lucide="pin" class="w-4 h-4"></i></button>
+                                    <button onclick="UI.copyLink('${s.videoId}')" class="p-2 bg-black/60 text-white rounded-lg hover:bg-accent hover:text-bg transition-all" title="Copy Link"><i data-lucide="copy" class="w-4 h-4"></i></button>
+                                    <button onclick="UI.showInfo('${s.id}')" class="p-2 bg-black/60 text-white rounded-lg hover:bg-accent hover:text-bg transition-all" title="Info"><i data-lucide="info" class="w-4 h-4"></i></button>
+                                </div>
+                            </div>
+                            <div class="absolute top-0 inset-x-0 p-3 flex items-center justify-between pointer-events-none">
+                                <div class="flex items-center gap-2">
+                                    <div class="w-2.5 h-2.5 rounded-full" style="background-color: ${s.colorTag}"></div>
+                                    <span class="text-xs font-bold text-white drop-shadow-md truncate font-display font-bold">${s.label}</span>
+                                </div>
+                                <div class="bg-black/40 px-2 py-1 rounded border border-white/10 flex items-center gap-2">
+                                    <div class="w-1.5 h-1.5 bg-danger rounded-full live-dot"></div>
+                                    <span class="text-[10px] font-bold text-white stream-status uppercase">LIVE</span>
+                                </div>
+                            </div>
+                            <div class="absolute bottom-0 inset-x-0 p-3 translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all z-10">
+                                <input type="range" class="custom-range stream-seekbar mb-2" value="0">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-3">
+                                        <button class="text-white hover:text-accent transition-colors btn-play-pause"><i data-lucide="pause" class="w-5 h-5"></i></button>
+                                        <div class="flex items-center gap-2 group/vol">
+                                            <button class="text-white hover:text-accent transition-colors btn-mute"><i data-lucide="volume-x" class="w-5 h-5"></i></button>
+                                            <input type="range" class="w-16 custom-range stream-volume" value="0">
+                                        </div>
+                                        <span class="text-[10px] font-mono text-white/80 stream-time">00:00 / 00:00</span>
+                                    </div>
+                                    <div class="flex gap-2">
+                                        <button class="text-white hover:text-accent transition-all btn-pip" title="PiP"><i data-lucide="external-link" class="w-4 h-4"></i></button>
+                                        <button class="text-white hover:text-accent transition-all btn-expand" title="Expand"><i data-lucide="maximize" class="w-4 h-4"></i></button>
+                                        <button onclick="state.removeStream('${s.id}')" class="text-danger/80 hover:text-danger"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="absolute inset-0 flex items-center justify-center bg-black/60 hidden stream-loading">
+                                <div class="w-10 h-10 border-2 border-accent/20 border-t-accent rounded-full animate-spin"></div>
+                            </div>
+                        `;
+                        this.grid.appendChild(t); PlayerManager.initPlayer(s.id, s.videoId);
+                    }
+                    t.style.gridColumn = ''; t.style.gridRow = '';
+                    if (state.layoutMode === 'grid' && count === 3 && idx === 2) t.style.gridColumn = 'span 2';
+                    else if (state.layoutMode === 'focus' && idx === 0) t.style.gridRow = `span ${Math.max(1, count - 1)}`;
+                });
+            },
+            openModal(t) {
+                this.modalContainer.classList.remove('hidden');
+                document.getElementById('shortcuts-modal').classList.toggle('hidden', t !== 'shortcuts');
+                document.getElementById('add-stream-modal').classList.toggle('hidden', t !== 'add');
+                document.getElementById('batch-add-modal').classList.toggle('hidden', t !== 'batch');
+                if (t === 'add') this.initColorPicker();
+                setTimeout(() => this.modalContainer.classList.add('opacity-100'), 10);
+            },
+            closeModal() {
+                this.modalContainer.classList.remove('opacity-100');
+                setTimeout(() => { this.modalContainer.classList.add('hidden'); this.resetModal(); }, 300);
+            },
+            resetModal() {
+                document.getElementById('modal-url-input').value = '';
+                document.getElementById('modal-step-2').classList.add('hidden');
+                document.getElementById('batch-textarea').value = '';
+                document.getElementById('batch-preview').innerHTML = '';
+            },
+            validateUrl(u) {
+                const id = YouTubeParser.extractVideoId(u);
+                const step2 = document.getElementById('modal-step-2'), btn = document.getElementById('modal-add-btn');
+                step2.classList.toggle('hidden', !id); btn.disabled = !id; btn.classList.toggle('opacity-50', !id);
+                if (id) { document.getElementById('modal-preview-thumb').src = `https://img.youtube.com/vi/${id}/hqdefault.jpg`; document.getElementById('modal-preview-id').textContent = id; }
+            },
+            initColorPicker() {
+                const cols = ['#00e5a0', '#6366f1', '#ff3366', '#ffaa00', '#ec4899', '#06b6d4'];
+                document.getElementById('color-picker').innerHTML = cols.map((c, i) => `<button data-color="${c}" class="color-option w-8 h-8 rounded-full ${i===0?'active border-2 border-white scale-110':''}" style="background-color: ${c}"></button>`).join('');
+                document.querySelectorAll('.color-option').forEach(b => b.onclick = () => { document.querySelectorAll('.color-option').forEach(x => x.classList.remove('active', 'border-2', 'border-white', 'scale-110')); b.classList.add('active', 'border-2', 'border-white', 'scale-110'); });
+            },
+            previewBatch() {
+                const lns = document.getElementById('batch-textarea').value.split('\n').filter(l => l.trim());
+                const pr = document.getElementById('batch-preview');
+                if (lns.length === 0) { pr.classList.add('hidden'); return; }
+                pr.classList.remove('hidden');
+                pr.innerHTML = lns.map((l, i) => {
+                    const id = YouTubeParser.extractVideoId(l);
+                    return `<div class="p-3 bg-bg rounded-xl border ${id?'border-accent/20':'border-danger/20'} flex items-center gap-3">
+                        <input type="checkbox" class="batch-check w-4 h-4 rounded border-border text-accent focus:ring-accent" ${id?'checked':'disabled'} data-url="${l}">
+                        <div class="min-w-0 flex-1">
+                            <p class="text-[10px] font-mono truncate ${id?'text-accent':'text-danger'}">${l}</p>
+                            <p class="text-[8px] text-text-muted uppercase font-bold">${id?'Valid Link':'Invalid Source'}</p>
+                        </div>
+                    </div>`;
+                }).join('');
+            },
+            confirmBatch() {
+                const checks = document.querySelectorAll('.batch-check:checked');
+                let a = 0;
+                checks.forEach(c => {
+                    const id = YouTubeParser.extractVideoId(c.dataset.url);
+                    if (id) {
+                        try { state.addStream({ videoId: id, label: 'Batch Stream', colorTag: '#6366f1' }); a++; }
+                        catch(e) { this.showToast('error', e.message); }
+                    }
+                });
+                if (a > 0) this.showToast('success', `${a} streams added`);
+                this.closeModal();
+            },
+            confirmAdd() {
+                const id = YouTubeParser.extractVideoId(document.getElementById('modal-url-input').value);
+                const lbl = document.getElementById('modal-label-input').value || 'Untitled Stream';
+                const col = document.querySelector('.color-option.active')?.dataset.color || '#00e5a0';
+                try { state.addStream({ videoId: id, label: lbl, colorTag: col }); this.closeModal(); this.showToast('success', 'Stream added'); } catch(e) { this.showToast('error', e.message); }
+            },
+            showToast(t, m) {
+                const d = document.createElement('div'); d.className = `p-4 rounded-xl border bg-surface shadow-2xl flex items-center gap-3 transition-all transform translate-y-10 opacity-0 pointer-events-auto border-white/10`;
+                d.innerHTML = `<div class="w-2 h-2 rounded-full ${t==='error'?'bg-danger':'bg-accent'}"></div><span class="font-bold text-xs uppercase tracking-widest text-text-main">${m}</span>`;
+                this.toastContainer.appendChild(d); setTimeout(() => d.classList.remove('translate-y-10', 'opacity-0'), 10);
+                setTimeout(() => { d.classList.add('opacity-0'); setTimeout(() => d.remove(), 300); }, 3000);
+            },
+            togglePiP(id) {
+                const tile = document.getElementById(id);
+                const isPiP = tile.classList.contains('fixed');
+                if (isPiP) {
+                    tile.classList.remove('fixed', 'bottom-4', 'right-4', 'w-80', 'z-[200]', 'shadow-2xl', 'border-accent');
+                    tile.classList.add('relative', 'aspect-video');
+                } else {
+                    state.activeStreams.forEach(s => {
+                        const other = document.getElementById(s.id);
+                        if (other && other.classList.contains('fixed') && s.id !== id) this.togglePiP(s.id);
+                    });
+                    tile.classList.add('fixed', 'bottom-4', 'right-4', 'w-80', 'z-[200]', 'shadow-2xl', 'border-accent', 'draggable-pip');
+                    tile.classList.remove('relative', 'aspect-video');
+                    this.makeDraggable(tile);
+                    this.showToast('info', 'Mini player mode');
+                }
+            },
+            makeDraggable(el) {
+                let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+                el.onmousedown = (e) => {
+                    if (e.target.closest('button, input, .slider')) return;
+                    e.preventDefault();
+                    pos3 = e.clientX; pos4 = e.clientY;
+                    document.onmouseup = () => { document.onmouseup = null; document.onmousemove = null; };
+                    document.onmousemove = (e) => {
+                        e.preventDefault();
+                        pos1 = pos3 - e.clientX; pos2 = pos4 - e.clientY;
+                        pos3 = e.clientX; pos4 = e.clientY;
+                        el.style.top = (el.offsetTop - pos2) + "px";
+                        el.style.left = (el.offsetLeft - pos1) + "px";
+                        el.style.bottom = 'auto'; el.style.right = 'auto';
+                    };
+                };
+            },
+            toggleExpand(id) {
+                const t = document.getElementById(id); if (!t) return;
+                const isExp = t.classList.contains('fixed');
+                if (isExp) { t.classList.remove('fixed', 'inset-0', 'z-[100]', 'p-8', 'bg-black/90'); t.classList.add('relative', 'aspect-video'); }
+                else { t.classList.add('fixed', 'inset-0', 'z-[100]', 'p-8', 'bg-black/90'); t.classList.remove('relative', 'aspect-video'); }
+                lucide.createIcons();
+            },
+            copyLink(vId) {
+                const url = `https://www.youtube.com/watch?v=${vId}`;
+                navigator.clipboard.writeText(url);
+                this.showToast('success', 'Link copied to clipboard');
+            },
+            showInfo(id) {
+                const s = state.activeStreams.find(x => x.id === id);
+                if (s) this.showToast('info', `URL: youtube.com/watch?v=${s.videoId}`);
+            },
+            togglePin(id) {
+                const list = [...state.activeStreams];
+                const idx = list.findIndex(x => x.id === id);
+                if (idx > 0) {
+                    const [item] = list.splice(idx, 1);
+                    list.unshift(item);
+                    state.reorderStreams(list);
+                    this.showToast('success', 'Pinned to top');
+                } else this.showToast('info', 'Already at top');
+            },
+            showEnded(id) {
+                const l = document.getElementById(id).querySelector('.stream-loading'); l.classList.remove('hidden');
+                l.innerHTML = `<div class="text-center p-4 bg-black/80 rounded-2xl border border-white/10 shadow-2xl"><p class="text-white font-bold text-xs mb-4 uppercase tracking-widest">Stream Ended</p><div class="flex gap-2"><button onclick="PlayerManager.players.get('${id}').playVideo()" class="bg-accent text-bg px-4 py-2 rounded-lg font-bold text-[10px]">REPLAY</button><button onclick="state.removeStream('${id}')" class="bg-white/10 text-white px-4 py-2 rounded-lg font-bold text-[10px]">REMOVE</button></div></div>`;
+            }
+        };
+
+        window.onYouTubeIframeAPIReady = () => UI.init();
+        lucide.createIcons();
+    </script>
+</body>
+</html>
